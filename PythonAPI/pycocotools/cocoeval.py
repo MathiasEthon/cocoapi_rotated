@@ -5,6 +5,8 @@ import datetime
 import time
 from collections import defaultdict
 from . import mask as maskUtils
+from mmcv.ops import box_iou_rotated
+import torch
 import copy
 
 class COCOeval:
@@ -57,7 +59,7 @@ class COCOeval:
     # Data, paper, and tutorials available at:  http://mscoco.org/
     # Code written by Piotr Dollar and Tsung-Yi Lin, 2015.
     # Licensed under the Simplified BSD License [see coco/license.txt]
-    def __init__(self, cocoGt=None, cocoDt=None, iouType='segm'):
+    def __init__(self, rotated: bool, cocoGt=None, cocoDt=None, iouType='segm'):
         '''
         Initialize CocoEval using coco APIs for gt and dt
         :param cocoGt: coco object with ground truth annotations
@@ -79,6 +81,8 @@ class COCOeval:
         if not cocoGt is None:
             self.params.imgIds = sorted(cocoGt.getImgIds())
             self.params.catIds = sorted(cocoGt.getCatIds())
+
+        self.rotated = rotated
 
 
     def _prepare(self):
@@ -184,9 +188,14 @@ class COCOeval:
         else:
             raise Exception('unknown iouType for iou computation')
 
-        # compute iou between each dt and gt region
-        iscrowd = [int(o['iscrowd']) for o in gt]
-        ious = maskUtils.iou(d,g,iscrowd)
+        if self.rotated:
+            assert p.iouType == 'bbox', 'Rotated iou only support bbox'
+            ious = box_iou_rotated(torch.tensor(g), torch.tensor(d)).numpy()
+        else:
+            # compute iou between each dt and gt region
+            iscrowd = [int(o['iscrowd']) for o in gt]
+            ious = maskUtils.iou(d,g,iscrowd)
+
         return ious
 
     def computeOks(self, imgId, catId):
@@ -375,8 +384,9 @@ class COCOeval:
                     tps = np.logical_and(               dtm,  np.logical_not(dtIg) )
                     fps = np.logical_and(np.logical_not(dtm), np.logical_not(dtIg) )
 
-                    tp_sum = np.cumsum(tps, axis=1).astype(dtype=np.float)
-                    fp_sum = np.cumsum(fps, axis=1).astype(dtype=np.float)
+                    tp_sum = np.cumsum(tps, axis=1).astype(dtype=float)
+                    fp_sum = np.cumsum(fps, axis=1).astype(dtype=float)
+
                     for t, (tp, fp) in enumerate(zip(tp_sum, fp_sum)):
                         tp = np.array(tp)
                         fp = np.array(fp)
